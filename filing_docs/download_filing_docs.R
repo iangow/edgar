@@ -10,7 +10,7 @@ processed_table <- "filing_docs_processed"
 # Functions ----
 get_file_list <- function(num_files = Inf, form_types = NULL) {
 
-    pg <- dbConnect(RPostgreSQL::PostgreSQL())
+    pg <- dbConnect(RPostgres::Postgres())
 
     rs <- dbExecute(pg, paste0("SET search_path TO ", target_schema, ", edgar, public"))
 
@@ -58,11 +58,12 @@ get_file_list <- function(num_files = Inf, form_types = NULL) {
 
 get_filing_file_list <- function(num_files = Inf) {
 
-    pg <- dbConnect(RPostgreSQL::PostgreSQL())
+    pg <- dbConnect(RPostgres::Postgres())
 
     rs <- dbExecute(pg, paste0("SET search_path TO ", target_schema, ", edgar, public"))
 
     filing_docs <- tbl(pg, filing_docs_table)
+    filings <- tbl(pg, "filings")
 
     get_file_path <- function(file_name, document) {
         url <- gsub("(\\d{10})-(\\d{2})-(\\d{6})\\.txt", "\\1\\2\\3", file_name)
@@ -85,6 +86,7 @@ get_filing_file_list <- function(num_files = Inf) {
     files <-
         files %>%
         filter(document %~*% "htm$") %>%
+        semi_join(filings %>% filter(year(date_filed) == 2020)) %>%
         collect(n = num_files) %>%
         mutate(html_link = get_file_path(file_name, document))
 
@@ -113,8 +115,9 @@ get_filing_docs <- function(path) {
 
 download_filing_files <- function(max_files = Inf) {
 
-    pg <- dbConnect(RPostgreSQL::PostgreSQL())
-    new_table <- !dbExistsTable(pg, c(target_schema, processed_table))
+    pg <- dbConnect(RPostgres::Postgres())
+    dbExecute(pg, paste0("SET search_path TO ", target_schema))
+    new_table <- !dbExistsTable(pg, processed_table)
     dbDisconnect(pg)
     while (nrow(files <- get_filing_file_list(num_files = max_files))>0) {
         print("Getting files...")
@@ -148,8 +151,10 @@ library(parallel)
 
 raw_directory <- Sys.getenv("EDGAR_DIR")
 
-pg <- dbConnect(RPostgreSQL::PostgreSQL())
-new_table <- !dbExistsTable(pg, c(target_schema, processed_table))
+pg <- dbConnect(RPostgres::Postgres())
+dbExecute(pg, paste0("SET search_path TO ", target_schema))
+new_table <- !dbExistsTable(pg, processed_table)
+
 rs <- dbDisconnect(pg)
 while (nrow(files <- get_file_list(num_files = 1000)) > 0) {
     print("Getting files...")
@@ -163,7 +168,7 @@ while (nrow(files <- get_file_list(num_files = 1000)) > 0) {
         files %>%
         select(file_name, document, downloaded)
 
-    pg <- dbConnect(RPostgreSQL::PostgreSQL())
+    pg <- dbConnect(RPostgres::Postgres())
     rs <- dbExecute(pg, paste0("SET search_path TO ", target_schema, ", edgar, public"))
     dbWriteTable(pg, processed_table, downloaded_files,
                  append = !new_table,
